@@ -1,0 +1,71 @@
+{{- if .Values.install.enabled }}
+# Reconciles Magento's recorded configuration hash with the config.php that the
+# long-lived pods actually run.
+#
+# Why this is a second Job rather than the last few lines of the installer:
+#
+# `setup:install` appends a `system` section to app/etc/config.php inside the pod
+# executing it, and records THAT file's hash in the database. The installer is a
+# Job — it exits, and every web and cron pod still has the image's original
+# config.php. Its hash no longer matches the recorded one, so Magento answers
+# every request with 500 "The configuration file has changed".
+#
+# Reconciling it from inside the installer does not work. Even after restoring
+# the shipped config.php and flushing the cache, `setup:upgrade` there still
+# reports "Nothing to import" and leaves the stale hash in place — the process
+# has already loaded the mutated configuration. Run the very same command in a
+# pod that started clean and it reports "System config was processed" and
+# rewrites the hash. So this runs as its own pod, at hook-weight 1, which Helm
+# starts only after the installer at weight 0 has completed.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: magento-config-sync-{{ .Release.Revision }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.install.backoffLimit }}
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        {{- include "magento.labels" . | nindent 8 }}
+        component: config-sync
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.securityContext.fsGroup }}
+      containers:
+        - name: config-sync
+          image: "{{ .Values.image.app.repository }}:{{ .Values.image.app.tag }}"
+          imagePullPolicy: {{ .Values.image.app.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              # bin/magento needs database credentials, and env.php is rendered
+              # at pod start rather than baked into the image.
+              export MAGENTO_INSTALL_DATE="Wed, 01 Jan 2025 00:00:00 +0000"
+              envsubst < /usr/local/share/env.php.template > /var/www/html/app/etc/env.php
+              echo "[config-sync] reconciling recorded config hash"
+              php bin/magento setup:upgrade --keep-generated --no-interaction
+              php bin/magento cache:flush
+              echo "[config-sync] done."
+          envFrom:
+            - configMapRef: { name: magento-config }
+            - secretRef: { name: magento-secret }
+          resources: {{- toYaml .Values.install.resources | nindent 12 }}
+          volumeMounts:
+            - { name: media, mountPath: /var/www/html/pub/media }
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: magento-media
+{{- end }}
