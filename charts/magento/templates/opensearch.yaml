@@ -1,0 +1,94 @@
+# OpenSearch 2.x (Magento 2.4.7 certified search engine) as a single-node
+# StatefulSet. Internal-only; persistence optional but enabled here so the
+# product index survives pod restarts (requirement 3.4).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "magento.opensearchHost" . }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  clusterIP: None          # internal only, never public (3.6)
+  selector:
+    app.kubernetes.io/name: {{ include "magento.name" . }}
+    component: opensearch
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "magento.opensearchHost" . }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "magento.opensearchHost" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "magento.name" . }}
+      component: opensearch
+  template:
+    metadata:
+      labels:
+        {{- include "magento.labels" . | nindent 8 }}
+        component: opensearch
+    spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        # OpenSearch requires vm.max_map_count >= 262144. On a single-node dev
+        # cluster we set it via a privileged init container. In production this
+        # is a node-level sysctl managed outside the pod.
+        - name: sysctl
+          image: busybox:1.36
+          command: ["sh", "-c", "sysctl -w vm.max_map_count=262144 || true"]
+          securityContext:
+            privileged: true
+            runAsUser: 0
+      containers:
+        - name: opensearch
+          image: {{ .Values.opensearch.image | quote }}
+          ports:
+            - name: http
+              containerPort: 9200
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: DISABLE_SECURITY_PLUGIN   # simplifies internal Magento wiring
+              value: "true"
+            - name: DISABLE_INSTALL_DEMO_CONFIG
+              value: "true"
+            - name: OPENSEARCH_JAVA_OPTS
+              value: {{ .Values.opensearch.javaOpts | quote }}
+            - name: bootstrap.memory_lock
+              value: "false"
+          readinessProbe:
+            httpGet:
+              path: "/_cluster/health?local=true"
+              port: 9200
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: "/_cluster/health?local=true"
+              port: 9200
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources: {{- toYaml .Values.opensearch.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/opensearch/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [{{ .Values.opensearch.storage.accessMode }}]
+        {{- include "magento.storageClass" . | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ .Values.opensearch.storage.size }}

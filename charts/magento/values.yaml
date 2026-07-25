@@ -1,0 +1,230 @@
+# =============================================================================
+# Magento Open Source - default values
+# =============================================================================
+# These are SAFE, non-secret defaults. Everything sensitive (DB passwords,
+# Magento admin password, marketplace auth keys, Cloudflare tunnel token) is
+# injected at deploy time and NEVER committed. See .env.example + deploy.sh.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SECRETS - intentionally empty here. Injected at deploy time from .env via
+# deploy.sh (--set). The chart's Secret template uses `required` so a deploy
+# WITHOUT these values fails fast. NEVER put real values in this file.
+# -----------------------------------------------------------------------------
+secrets:
+  dbPassword: ""
+  dbRootPassword: ""
+  adminPassword: ""
+  cryptKey: ""          # 32-char stable key; generate: openssl rand -hex 16
+  marketplacePublicKey: ""
+  marketplacePrivateKey: ""
+  cloudflareTunnelToken: ""   # from `cloudflared tunnel token <name>`
+
+global:
+  # Cluster default StorageClass is used when this is "".
+  #   OrbStack (k3s) -> "local-path"   |   Minikube -> "standard"
+  # Leave empty to inherit the cluster default (portable across both).
+  storageClass: ""
+
+# -----------------------------------------------------------------------------
+# Public hostname. This becomes Magento's base_url and the Ingress host, and is
+# the hostname Cloudflare Tunnel maps to the in-cluster Ingress.
+# -----------------------------------------------------------------------------
+domain: magento.example.com
+
+# Scheme of the PUBLIC URL, i.e. what the browser talks to. Drives Magento's
+# base_url and its use_secure flags.
+#   https -> the intended production setup: TLS terminates at Cloudflare's edge
+#            and the tunnel forwards to the ingress. Magento is told to trust
+#            X-Forwarded-Proto so it keeps generating https links behind it.
+#   http  -> local-only runs (e.g. a *.local hostname straight at the ingress,
+#            no tunnel, no certificate). Without this Magento would 302 every
+#            request to an https URL nothing is listening on.
+publicScheme: https
+
+# Non-default admin path (security requirement 3.6). Overridable per-env.
+# Final admin URL => <publicScheme>://<domain>/<adminPath>
+adminPath: "admin_a1b2c3"
+
+image:
+  # Custom images built from ./docker (see README "Build images").
+  # Override the registry/repo when pushing to your own registry.
+  app:
+    repository: magento-app
+    tag: "2.4.7-p3"
+    pullPolicy: IfNotPresent
+  nginx:
+    repository: magento-nginx
+    tag: "2.4.7-p3"
+    pullPolicy: IfNotPresent
+
+# -----------------------------------------------------------------------------
+# Magento web tier: one Pod = nginx (serves static + proxies) + php-fpm.
+# Code is baked into the image (compiled DI + static content = production mode).
+# env.php is rendered at pod start from ConfigMap+Secret, so pods are stateless.
+# -----------------------------------------------------------------------------
+magento:
+  replicaCount: 1
+  # Rendered into app/etc/env.php at startup.
+  runMode: production
+  # Non-secret store config.
+  language: en_US
+  currency: USD
+  timezone: Asia/Jakarta
+  adminUser: admin
+  adminFirstname: Store
+  adminLastname: Admin
+  adminEmail: admin@example.com
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      # No CPU limit on PHP-FPM on purpose (avoid throttling latency);
+      # memory limit protects the node. See docs/production-design.md.
+      memory: "2Gi"
+
+  # nginx sidecar: static files + proxying only, so it stays tiny.
+  nginxResources:
+    requests: { cpu: "50m", memory: "64Mi" }
+    limits: { memory: "128Mi" }
+
+  # PHP-FPM pool sizing. Memory budget ~= pm.max_children * per-worker (~80MB).
+  phpFpm:
+    pm: dynamic
+    maxChildren: 16
+    startServers: 4
+    minSpareServers: 2
+    maxSpareServers: 6
+
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 60
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  # Shared media (pub/media) - product images & uploads. RWO works on a
+  # single-node cluster; production multi-node needs RWX (EFS/Filestore/NFS).
+  media:
+    size: 5Gi
+    accessMode: ReadWriteOnce
+
+# One-shot install/upgrade Job (setup:install / setup:upgrade).
+install:
+  enabled: true
+  backoffLimit: 3
+  # setup:install is the single heaviest step in the whole deploy; it only runs
+  # once, but the node has to have this much free while it does.
+  resources:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits: { memory: "2Gi" }
+  # Set true to force a fresh setup:install (drops existing Magento schema!).
+  forceReinstall: false
+
+# Magento cron (index/queue/scheduled tasks) - required for a healthy store.
+cron:
+  enabled: true
+  resources:
+    requests: { cpu: "100m", memory: "512Mi" }
+    limits: { memory: "1Gi" }
+
+# -----------------------------------------------------------------------------
+# Data tier
+# -----------------------------------------------------------------------------
+mariadb:
+  image: mariadb:10.6
+  # Magento uses a DEDICATED, non-root DB user (security requirement 3.6).
+  database: magento
+  user: magento
+  storage:
+    size: 8Gi
+    accessMode: ReadWriteOnce
+  resources:
+    requests: { cpu: "250m", memory: "1Gi" }
+    limits: { memory: "2Gi" }
+
+opensearch:
+  image: opensearchproject/opensearch:2.12.0
+  # Single node; in-cluster only, so the security plugin is disabled to keep
+  # Magento<->OpenSearch simple. NetworkPolicy + ClusterIP keep it private.
+  storage:
+    size: 5Gi
+    accessMode: ReadWriteOnce
+  javaOpts: "-Xms512m -Xmx512m"
+  resources:
+    requests: { cpu: "500m", memory: "1536Mi" }
+    limits: { memory: "2Gi" }
+
+redis:
+  enabled: true
+  image: redis:7.2-alpine
+  # Two logical DBs: 0 = default cache, 1 = full page cache, 2 = sessions.
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits: { memory: "512Mi" }
+
+# -----------------------------------------------------------------------------
+# Ingress - in-cluster L7 entrypoint. Cloudflare Tunnel forwards to this.
+# TLS is terminated at Cloudflare's edge; tunnel<->cluster traffic is the
+# encrypted Cloudflare connection, so in-cluster we serve plain HTTP.
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    # Same reason as fastcgi_buffer_size in the pod's nginx: Magento's response
+    # headers (Set-Cookie on redirects, admin pages) overflow the controller's
+    # default 4k/8k proxy buffer and it returns 502 before the body is touched.
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "32k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "8"
+
+# -----------------------------------------------------------------------------
+# Cloudflare Tunnel (cloudflared) - the public exposure mechanism.
+# Token is provided at deploy time via Secret (NEVER committed).
+# cloudflared -> ingress-nginx controller Service -> Ingress -> magento Service.
+# -----------------------------------------------------------------------------
+cloudflared:
+  enabled: true
+  image: cloudflare/cloudflared:2024.10.0
+  replicaCount: 2
+  # The in-cluster URL cloudflared forwards public traffic to.
+  ingressServiceUrl: "http://ingress-nginx-controller.ingress-nginx.svc.cluster.local:80"
+  resources:
+    requests: { cpu: "50m", memory: "64Mi" }
+    limits: { memory: "128Mi" }
+
+# -----------------------------------------------------------------------------
+# Reliability / scaling extras (bonus)
+# -----------------------------------------------------------------------------
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  # Off by default because it requires a CNI that enforces policies.
+  # k3s/OrbStack default CNI (flannel) does NOT enforce them -> documented as
+  # a production control in docs/production-design.md.
+  enabled: false
+
+# Run containers as non-root wherever the upstream image allows it.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000

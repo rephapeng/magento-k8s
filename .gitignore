@@ -1,0 +1,26 @@
+# Secrets & local config - NEVER commit
+.env
+.env.*
+!.env.example
+auth.json
+*.pem
+*.key
+kubeconfig
+
+# Rendered secrets / env
+**/app/etc/env.php
+secret.yaml
+!charts/magento/templates/secret.yaml
+
+# Backups & local artifacts
+backups/
+*.sql
+*.sql.gz
+*.tar.gz
+*.tgz
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

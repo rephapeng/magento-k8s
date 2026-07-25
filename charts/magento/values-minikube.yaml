@@ -1,0 +1,15 @@
+# Overlay for Minikube (the environment the assessment targets). Apply with:
+#   helm ... -f values.yaml -f values-minikube.yaml
+# Prereqs on Minikube:
+#   minikube start --cpus=6 --memory=12288 --disk-size=40g
+#   minikube addons enable ingress          # provides ingress-nginx
+global:
+  storageClass: "standard"     # Minikube default (k8s.io/minikube-hostpath)
+
+ingress:
+  className: nginx
+
+# Minikube's built-in ingress addon runs in the ingress-nginx namespace with the
+# controller Service named ingress-nginx-controller (same as our default).
+cloudflared:
+  ingressServiceUrl: "http://ingress-nginx-controller.ingress-nginx.svc.cluster.local:80"

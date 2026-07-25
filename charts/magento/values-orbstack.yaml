@@ -1,0 +1,12 @@
+# Overlay for local OrbStack Kubernetes (k3s). Apply with:
+#   helm ... -f values.yaml -f values-orbstack.yaml
+global:
+  storageClass: "local-path"   # OrbStack default provisioner
+
+# OrbStack has plenty of headroom on a dev laptop but keep it lean.
+opensearch:
+  javaOpts: "-Xms512m -Xmx512m"
+
+# NetworkPolicy is not enforced by OrbStack's default CNI -> keep off locally.
+networkPolicy:
+  enabled: false

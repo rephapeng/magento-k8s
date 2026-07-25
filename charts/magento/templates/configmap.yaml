@@ -1,0 +1,35 @@
+# Non-secret application configuration. Clearly separated from Secret (3.6).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: magento-config
+  labels: {{- include "magento.labels" . | nindent 4 }}
+data:
+  MAGENTO_DOMAIN: {{ .Values.domain | quote }}
+  MAGENTO_BASE_URL: {{ printf "%s://%s/" .Values.publicScheme .Values.domain | quote }}
+  # 1 => force https for storefront+admin and trust the proxy's X-Forwarded-Proto.
+  MAGENTO_USE_SECURE: {{ eq .Values.publicScheme "https" | ternary "1" "0" | quote }}
+  MAGENTO_ADMIN_PATH: {{ .Values.adminPath | quote }}
+  MAGENTO_RUN_MODE: {{ .Values.magento.runMode | quote }}
+  MAGENTO_LANGUAGE: {{ .Values.magento.language | quote }}
+  MAGENTO_CURRENCY: {{ .Values.magento.currency | quote }}
+  MAGENTO_TIMEZONE: {{ .Values.magento.timezone | quote }}
+  MAGENTO_ADMIN_USER: {{ .Values.magento.adminUser | quote }}
+  MAGENTO_ADMIN_FIRSTNAME: {{ .Values.magento.adminFirstname | quote }}
+  MAGENTO_ADMIN_LASTNAME: {{ .Values.magento.adminLastname | quote }}
+  MAGENTO_ADMIN_EMAIL: {{ .Values.magento.adminEmail | quote }}
+  # Data-tier coordinates (hostnames are ClusterIP services, not public).
+  DB_HOST: {{ include "magento.mariadbHost" . | quote }}
+  DB_NAME: {{ .Values.mariadb.database | quote }}
+  DB_USER: {{ .Values.mariadb.user | quote }}
+  OPENSEARCH_HOST: {{ include "magento.opensearchHost" . | quote }}
+  OPENSEARCH_PORT: "9200"
+  REDIS_HOST: {{ include "magento.redisHost" . | quote }}
+  REDIS_PORT: "6379"
+  REDIS_ENABLED: {{ .Values.redis.enabled | quote }}
+  # PHP-FPM pool tuning consumed by the app image entrypoint.
+  PHP_FPM_PM: {{ .Values.magento.phpFpm.pm | quote }}
+  PHP_FPM_MAX_CHILDREN: {{ .Values.magento.phpFpm.maxChildren | quote }}
+  PHP_FPM_START_SERVERS: {{ .Values.magento.phpFpm.startServers | quote }}
+  PHP_FPM_MIN_SPARE_SERVERS: {{ .Values.magento.phpFpm.minSpareServers | quote }}
+  PHP_FPM_MAX_SPARE_SERVERS: {{ .Values.magento.phpFpm.maxSpareServers | quote }}

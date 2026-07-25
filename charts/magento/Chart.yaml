@@ -1,0 +1,16 @@
+apiVersion: v2
+name: magento
+description: Magento Open Source on Kubernetes (separated Nginx + PHP-FPM, MariaDB, OpenSearch, Redis) exposed publicly via Cloudflare Tunnel.
+type: application
+# Chart version is independent from the application version.
+version: 1.0.0
+# The Magento Open Source release this chart is designed and tested against.
+appVersion: "2.4.7-p3"
+maintainers:
+  - name: Cloud Operations Candidate
+keywords:
+  - magento
+  - ecommerce
+  - php-fpm
+  - opensearch
+  - mariadb

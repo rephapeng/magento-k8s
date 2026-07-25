@@ -1,0 +1,14 @@
+# Shared media (pub/media): product images + admin uploads. Persists across
+# pod recreation (requirement 3.4). RWO is fine on a single node; a multi-node
+# production cluster needs RWX (EFS / Filestore / NFS) - see production-design.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: magento-media
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.magento.media.accessMode }}]
+  {{- include "magento.storageClass" . | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ .Values.magento.media.size }}

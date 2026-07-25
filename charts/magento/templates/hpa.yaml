@@ -1,0 +1,24 @@
+{{- if .Values.hpa.enabled }}
+# HorizontalPodAutoscaler for the web tier (bonus 8). Requires metrics-server.
+# Safe to enable because the web tier is stateless (session+cache in Redis,
+# media on a shared PVC). Never target the cron Deployment with an HPA.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "magento.webService" . }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "magento.webService" . }}
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}
+{{- end }}

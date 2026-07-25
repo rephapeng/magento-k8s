@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny + explicit allows (bonus 8 / requirement 3.6). This is the
+# production intent: the data tier only accepts traffic from Magento pods, and
+# only the web tier is reachable from the ingress controller.
+# NOTE: requires a policy-enforcing CNI (Calico/Cilium). k3s/OrbStack's default
+# flannel does NOT enforce these, hence disabled locally and documented instead.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-from-ingress
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "magento.name" . }}
+      component: web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - { protocol: TCP, port: 8080 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-datatier-from-magento
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: component, operator: In, values: [mariadb, opensearch, redis] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: component, operator: In, values: [web, cron, install] }
+{{- end }}

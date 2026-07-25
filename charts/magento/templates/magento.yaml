@@ -1,0 +1,132 @@
+# -----------------------------------------------------------------------------
+# Magento web tier.
+# One Pod runs two single-purpose containers (PHP-FPM split from the web server,
+# as invited by the assessment):
+#   * php-fpm  : executes Magento PHP (listens 127.0.0.1:9000)
+#   * nginx    : serves static/media + proxies dynamic requests to php-fpm
+# The Magento codebase is baked into the app image (compiled DI + deployed
+# static content = production mode) and shared into nginx via an emptyDir
+# populated by an init container. Uploads (pub/media) live on a shared PVC so
+# they persist and can be shared across replicas.
+# app/etc/env.php is rendered at startup from ConfigMap+Secret => pods are
+# stateless and horizontally scalable.
+# -----------------------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "magento.webService" . }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "magento.name" . }}
+    component: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "magento.webService" . }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.magento.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0        # zero-downtime rollout (bonus 8)
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "magento.name" . }}
+      component: web
+  template:
+    metadata:
+      labels:
+        {{- include "magento.labels" . | nindent 8 }}
+        component: web
+      annotations:
+        # Roll pods when non-secret config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.securityContext.fsGroup }}
+      initContainers:
+        # Copy the baked, compiled codebase into the shared volume so nginx and
+        # php-fpm serve byte-identical files.
+        - name: copy-code
+          image: "{{ .Values.image.app.repository }}:{{ .Values.image.app.tag }}"
+          imagePullPolicy: {{ .Values.image.app.pullPolicy }}
+          # Copies the ENTRIES of /var/www/html rather than the directory
+          # itself: `cp ... /var/www/html/. /shared-code/` would also stamp the
+          # source's mode/timestamps onto /shared-code, and that emptyDir root
+          # is owned by root, so our uid 1000 gets EPERM and the pod never
+          # starts. -mindepth 1 also keeps dotfiles (.htaccess, .user.ini),
+          # which a `/var/www/html/*` glob would silently drop.
+          command: ["sh", "-c", "find /var/www/html -mindepth 1 -maxdepth 1 -exec cp -dR --preserve=mode,links -t /shared-code/ {} + && mkdir -p /shared-code/pub/media /shared-code/var"]
+          volumeMounts:
+            - { name: code, mountPath: /shared-code }
+      containers:
+        - name: php-fpm
+          image: "{{ .Values.image.app.repository }}:{{ .Values.image.app.tag }}"
+          imagePullPolicy: {{ .Values.image.app.pullPolicy }}
+          # Entrypoint renders app/etc/env.php from env then execs php-fpm.
+          command: ["/usr/local/bin/docker-entrypoint.sh"]
+          args: ["php-fpm", "-F"]
+          envFrom:
+            - configMapRef: { name: magento-config }
+            - secretRef: { name: magento-secret }
+          ports:
+            - { name: fpm, containerPort: 9000 }
+          {{- if .Values.magento.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket: { port: 9000 }
+            initialDelaySeconds: {{ .Values.magento.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.magento.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.magento.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.magento.readinessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.magento.livenessProbe.enabled }}
+          livenessProbe:
+            tcpSocket: { port: 9000 }
+            initialDelaySeconds: {{ .Values.magento.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.magento.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.magento.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.magento.livenessProbe.failureThreshold }}
+          {{- end }}
+          resources: {{- toYaml .Values.magento.resources | nindent 12 }}
+          volumeMounts:
+            - { name: code, mountPath: /var/www/html }
+            - { name: media, mountPath: /var/www/html/pub/media }
+        - name: nginx
+          image: "{{ .Values.image.nginx.repository }}:{{ .Values.image.nginx.tag }}"
+          imagePullPolicy: {{ .Values.image.nginx.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources: {{- toYaml .Values.magento.nginxResources | nindent 12 }}
+          volumeMounts:
+            - { name: code, mountPath: /var/www/html, readOnly: true }
+            - { name: media, mountPath: /var/www/html/pub/media, readOnly: true }
+      volumes:
+        - name: code
+          emptyDir: {}
+        - name: media
+          persistentVolumeClaim:
+            claimName: magento-media

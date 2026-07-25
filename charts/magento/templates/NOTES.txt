@@ -1,0 +1,19 @@
+
+Magento Open Source {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Public URL   : https://{{ .Values.domain }}
+Admin panel  : https://{{ .Values.domain }}/{{ .Values.adminPath }}
+Admin user   : {{ .Values.magento.adminUser }}   (password: from your .env)
+
+Next steps
+----------
+1. Watch the install Job complete:
+     kubectl -n {{ .Release.Namespace }} logs -f job/$(kubectl -n {{ .Release.Namespace }} get job -l component=install -o name | tail -1 | cut -d/ -f2)
+
+2. Watch pods become Ready:
+     kubectl -n {{ .Release.Namespace }} get pods -w
+
+3. Verify everything:
+     ./scripts/verify.sh
+
+Data tier is ClusterIP-only (never public). TLS terminates at Cloudflare.

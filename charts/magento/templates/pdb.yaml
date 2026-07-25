@@ -1,0 +1,15 @@
+{{- if .Values.pdb.enabled }}
+# PodDisruptionBudget keeps at least one web pod serving during voluntary
+# disruptions (node drain, rollout). Only meaningful with replicaCount >= 2.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "magento.webService" . }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "magento.name" . }}
+      component: web
+{{- end }}

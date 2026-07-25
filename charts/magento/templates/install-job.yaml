@@ -1,0 +1,51 @@
+{{- if .Values.install.enabled }}
+# One-shot installer/upgrader. Runs the baked magento-install.sh which:
+#   1. waits for MariaDB + OpenSearch to be reachable
+#   2. detects install state by querying the DB directly
+#   3. fresh   -> bin/magento setup:install (+ seeds one sample product)
+#      existing-> renders env.php + bin/magento setup:upgrade
+#   4. reindex + cache:flush
+# Idempotent, so it is safe to re-run on every `helm upgrade`.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: magento-install-{{ .Release.Revision }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.install.backoffLimit }}
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        {{- include "magento.labels" . | nindent 8 }}
+        component: install
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.securityContext.fsGroup }}
+      containers:
+        - name: install
+          image: "{{ .Values.image.app.repository }}:{{ .Values.image.app.tag }}"
+          imagePullPolicy: {{ .Values.image.app.pullPolicy }}
+          command: ["/usr/local/bin/magento-install.sh"]
+          env:
+            - name: FORCE_REINSTALL
+              value: {{ .Values.install.forceReinstall | quote }}
+          envFrom:
+            - configMapRef: { name: magento-config }
+            - secretRef: { name: magento-secret }
+          resources: {{- toYaml .Values.install.resources | nindent 12 }}
+          volumeMounts:
+            - { name: media, mountPath: /var/www/html/pub/media }
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: magento-media
+{{- end }}

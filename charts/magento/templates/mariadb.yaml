@@ -1,0 +1,86 @@
+# MariaDB as a StatefulSet: stable network id + stable per-replica PVC via
+# volumeClaimTemplates. Data survives pod deletion (requirement 3.4).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "magento.mariadbHost" . }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  # Internal only (ClusterIP). Never reachable from the internet (3.6).
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: {{ include "magento.name" . }}
+    component: mariadb
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "magento.mariadbHost" . }}
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "magento.mariadbHost" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "magento.name" . }}
+      component: mariadb
+  template:
+    metadata:
+      labels:
+        {{- include "magento.labels" . | nindent 8 }}
+        component: mariadb
+    spec:
+      securityContext:
+        fsGroup: 999            # mysql group in the official image
+      containers:
+        - name: mariadb
+          image: {{ .Values.mariadb.image | quote }}
+          args:
+            - --max_allowed_packet=64M
+            - --innodb-buffer-pool-size=512M
+            - --transaction-isolation=READ-COMMITTED   # required by Magento
+          ports:
+            - name: mysql
+              containerPort: 3306
+          env:
+            - name: MYSQL_DATABASE
+              value: {{ .Values.mariadb.database | quote }}
+            - name: MYSQL_USER          # DEDICATED non-root app user
+              value: {{ .Values.mariadb.user | quote }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: magento-secret, key: DB_PASSWORD }
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: magento-secret, key: DB_ROOT_PASSWORD }
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "mariadb-admin ping -h 127.0.0.1 -u root -p\"$MYSQL_ROOT_PASSWORD\""]
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "mariadb -h 127.0.0.1 -u root -p\"$MYSQL_ROOT_PASSWORD\" -e 'SELECT 1'"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources: {{- toYaml .Values.mariadb.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [{{ .Values.mariadb.storage.accessMode }}]
+        {{- include "magento.storageClass" . | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ .Values.mariadb.storage.size }}

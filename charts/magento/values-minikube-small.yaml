@@ -1,0 +1,89 @@
+# =============================================================================
+# Overlay for a SMALL Minikube VM — 2 vCPU / 4 GB RAM
+#   minikube start --cpus=2 --memory=4096 --disk-size=20g
+#   minikube addons enable ingress
+#   helm ... -f values.yaml -f values-minikube.yaml -f values-minikube-small.yaml
+# =============================================================================
+# The default values target a comfortable dev box and request ~1.6 vCPU /
+# ~4.4 GiB, which does NOT fit a 2c/4g node once kube-system and ingress-nginx
+# have taken their share (~0.8 vCPU / ~1.1 GiB). This overlay trims every tier
+# to fit, at the cost of headroom and speed. See docs/production-design.md.
+#
+# Budget after this overlay (steady state, requests):
+#   php-fpm 300m/768Mi + nginx 25m/32Mi + mariadb 100m/384Mi
+#   + opensearch 250m/768Mi + redis 50m/64Mi + cron 50m/256Mi
+#   = 775m / 2272Mi  -> leaves ~1.2 vCPU / ~1.7 GiB for the system + install Job
+#
+# Trade-offs, stated plainly:
+#   - 4 PHP-FPM workers => ~4 concurrent PHP requests. Fine for a demo, not load.
+#   - OpenSearch on a 256 MB heap is below Elastic's comfort zone; it indexes a
+#     small catalogue fine but will GC-thrash on a real one.
+#   - The install Job is the peak: it needs ~1 GiB while the rest is running.
+#     It is why cron starts scaled to zero here (see install note below).
+#   - Expect the first install to take noticeably longer than on 4+ cores.
+
+global:
+  storageClass: "standard"
+
+magento:
+  replicaCount: 1
+  resources:
+    requests: { cpu: "300m", memory: "768Mi" }
+    limits:   { memory: "1Gi" }
+  nginxResources:
+    requests: { cpu: "25m", memory: "32Mi" }
+    limits:   { memory: "64Mi" }
+  # ~4 workers x ~150 MB peak = the 768Mi request above.
+  phpFpm:
+    pm: dynamic
+    maxChildren: 4
+    startServers: 2
+    minSpareServers: 1
+    maxSpareServers: 2
+
+mariadb:
+  resources:
+    requests: { cpu: "100m", memory: "384Mi" }
+    limits:   { memory: "768Mi" }
+
+opensearch:
+  javaOpts: "-Xms256m -Xmx256m"
+  resources:
+    requests: { cpu: "250m", memory: "768Mi" }
+    limits:   { memory: "1Gi" }
+
+redis:
+  resources:
+    requests: { cpu: "50m", memory: "64Mi" }
+    limits:   { memory: "128Mi" }
+
+cron:
+  resources:
+    requests: { cpu: "50m", memory: "256Mi" }
+    limits:   { memory: "512Mi" }
+
+# The one-shot installer is the peak memory consumer. Kept modest, but note it
+# still needs ~768Mi free at the same time as everything above.
+install:
+  resources:
+    requests: { cpu: "250m", memory: "768Mi" }
+    limits:   { memory: "1Gi" }
+
+# A single tunnel replica — two would be pointless on a one-node cluster and
+# the second is pure overhead here.
+cloudflared:
+  replicaCount: 1
+  resources:
+    requests: { cpu: "25m", memory: "32Mi" }
+    limits:   { memory: "64Mi" }
+
+# Nothing to scale onto on a 2-core single node.
+hpa:
+  enabled: false
+
+# A PDB with one replica only blocks drains on a single-node cluster.
+pdb:
+  enabled: false
+
+networkPolicy:
+  enabled: false

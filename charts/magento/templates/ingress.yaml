@@ -1,0 +1,26 @@
+{{- if .Values.ingress.enabled }}
+# In-cluster L7 entrypoint (requirement 3.1). Cloudflare Tunnel forwards public
+# traffic to the ingress-nginx controller, which routes by host to magento-web.
+# TLS is terminated at Cloudflare's edge; HTTP->HTTPS redirect is enforced there
+# (Always Use HTTPS) and reinforced by Magento's https base_url.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: magento
+  labels: {{- include "magento.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.domain | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "magento.webService" . }}
+                port:
+                  number: 80
+{{- end }}

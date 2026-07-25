@@ -1,0 +1,64 @@
+{{- if .Values.cron.enabled }}
+# Magento cron: indexers, scheduled jobs, and message-queue consumers. Runs as
+# a SINGLE dedicated replica (never scale this with the web tier) so scheduled
+# jobs are not executed concurrently by multiple pods (requirement 3.5).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: magento-cron
+  labels: {{- include "magento.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # exactly one cron runner at a time
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "magento.name" . }}
+      component: cron
+  template:
+    metadata:
+      labels:
+        {{- include "magento.labels" . | nindent 8 }}
+        component: cron
+    spec:
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.securityContext.fsGroup }}
+      initContainers:
+        - name: copy-code
+          image: "{{ .Values.image.app.repository }}:{{ .Values.image.app.tag }}"
+          imagePullPolicy: {{ .Values.image.app.pullPolicy }}
+          # See magento.yaml for why this copies entries, not the directory.
+          command: ["sh", "-c", "find /var/www/html -mindepth 1 -maxdepth 1 -exec cp -dR --preserve=mode,links -t /shared-code/ {} + && mkdir -p /shared-code/pub/media /shared-code/var"]
+          volumeMounts:
+            - { name: code, mountPath: /shared-code }
+      containers:
+        - name: cron
+          image: "{{ .Values.image.app.repository }}:{{ .Values.image.app.tag }}"
+          imagePullPolicy: {{ .Values.image.app.pullPolicy }}
+          # Render env.php, then loop bin/magento cron:run every minute.
+          command: ["/usr/local/bin/docker-entrypoint.sh"]
+          args: ["cron"]
+          envFrom:
+            - configMapRef: { name: magento-config }
+            - secretRef: { name: magento-secret }
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pgrep -f cron:run || pgrep -f 'sleep 60'"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 4
+          resources: {{- toYaml .Values.cron.resources | nindent 12 }}
+          volumeMounts:
+            - { name: code, mountPath: /var/www/html }
+            - { name: media, mountPath: /var/www/html/pub/media }
+      volumes:
+        - name: code
+          emptyDir: {}
+        - name: media
+          persistentVolumeClaim:
+            claimName: magento-media
+{{- end }}
