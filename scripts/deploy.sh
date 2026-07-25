@@ -29,9 +29,19 @@ fi
 OVERLAY="charts/magento/values-${CLUSTER_PROFILE}.yaml"
 [ -f "$OVERLAY" ] || { echo "ERROR: unknown CLUSTER_PROFILE '$CLUSTER_PROFILE'"; exit 1; }
 
-# Warn if the custom images are not present locally.
-if ! docker image inspect "magento-app:2.4.7-p3" >/dev/null 2>&1; then
-  echo "WARNING: magento-app:2.4.7-p3 not found locally. Run scripts/build-images.sh first."
+# Image source. Default is the locally built image; set IMAGE_REGISTRY in .env
+# (e.g. ghcr.io/<owner>) to pull images produced by the CI workflow instead,
+# which is what a remote cluster with no local Docker daemon needs.
+IMAGE_ARGS=()
+if [ -n "${IMAGE_REGISTRY:-}" ]; then
+  echo "==> Images from registry: ${IMAGE_REGISTRY}"
+  IMAGE_ARGS=(
+    --set-string "image.app.repository=${IMAGE_REGISTRY}/magento-app"
+    --set-string "image.nginx.repository=${IMAGE_REGISTRY}/magento-nginx"
+  )
+elif ! docker image inspect "magento-app:2.4.7-p3" >/dev/null 2>&1; then
+  echo "WARNING: magento-app:2.4.7-p3 not found locally and IMAGE_REGISTRY is unset."
+  echo "         Run scripts/build-images.sh, or set IMAGE_REGISTRY in .env."
 fi
 
 echo "==> Namespace: $NAMESPACE | Release: $RELEASE | Profile: $CLUSTER_PROFILE"
@@ -41,6 +51,8 @@ echo "==> helm upgrade --install"
 helm upgrade --install "$RELEASE" charts/magento \
   --namespace "$NAMESPACE" \
   -f charts/magento/values.yaml -f "$OVERLAY" \
+  ${EXTRA_VALUES:+-f $EXTRA_VALUES} \
+  ${IMAGE_ARGS[@]+"${IMAGE_ARGS[@]}"} \
   --set-string domain="$MAGENTO_DOMAIN" \
   --set-string publicScheme="$PUBLIC_SCHEME" \
   --set cloudflared.enabled="$CLOUDFLARED_ENABLED" \
