@@ -59,11 +59,15 @@ else
 
   # setup:install rewrote app/etc/config.php in THIS pod (adding scopes, themes
   # and so on) and recorded that version's hash in the database. Every other pod
-  # still runs the image's original config.php, so they would all fail Magento's
-  # config-change check with a 500. Restoring the shipped file and re-importing
-  # puts the hash on record back in sync with what the running pods have.
+  # still runs the image's original config.php, so without this they would all
+  # fail Magento's config-change check and answer 500.
+  #
+  # Restore the shipped file, then re-sync the recorded hash to it. It has to be
+  # setup:upgrade and not app:config:import: import only rewrites the hash when
+  # it finds config *content* to import, and here there is none — it reports
+  # "Nothing to import" and leaves the stale hash in place.
   cp /usr/local/share/config.php.dist /var/www/html/app/etc/config.php
-  php bin/magento app:config:import --no-interaction
+  php bin/magento setup:upgrade --keep-generated --no-interaction
 
   php bin/magento config:set web/unsecure/base_url "${MAGENTO_BASE_URL}"
   if [ "${MAGENTO_USE_SECURE}" = "1" ]; then

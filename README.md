@@ -432,8 +432,10 @@ A few problems here have non-obvious causes and are worth recording:
   pod still has the image's original `config.php`, whose hash no longer matches.
   Magento answers every request with *"The configuration file has changed"* and a
   500. The install script restores the shipped file from
-  `/usr/local/share/config.php.dist` and runs `app:config:import`, so the
-  recorded hash matches what the running pods actually have.
+  `/usr/local/share/config.php.dist` and re-syncs the recorded hash to it. That
+  step has to be `setup:upgrade`, not `app:config:import`: import only rewrites
+  the hash when it finds config *content* to import, and here there is none — it
+  reports "Nothing to import" and leaves the stale hash exactly where it was.
 
 - **`cp -a` fails in the init container.** Copying the code into the shared
   `emptyDir` with `cp -a src/. /dest/` also stamps the source directory's mode and
