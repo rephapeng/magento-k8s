@@ -57,18 +57,6 @@ else
     --use-rewrites=1 \
     --no-interaction
 
-  # setup:install rewrote app/etc/config.php in THIS pod (adding scopes, themes
-  # and so on) and recorded that version's hash in the database. Every other pod
-  # still runs the image's original config.php, so without this they would all
-  # fail Magento's config-change check and answer 500.
-  #
-  # Restore the shipped file, then re-sync the recorded hash to it. It has to be
-  # setup:upgrade and not app:config:import: import only rewrites the hash when
-  # it finds config *content* to import, and here there is none — it reports
-  # "Nothing to import" and leaves the stale hash in place.
-  cp /usr/local/share/config.php.dist /var/www/html/app/etc/config.php
-  php bin/magento setup:upgrade --keep-generated --no-interaction
-
   php bin/magento config:set web/unsecure/base_url "${MAGENTO_BASE_URL}"
   if [ "${MAGENTO_USE_SECURE}" = "1" ]; then
     # Behind Cloudflare Tunnel + ingress, trust the forwarded HTTPS scheme.
@@ -90,4 +78,32 @@ fi
 echo "[install] reindex + cache flush"
 php bin/magento indexer:reindex || true
 php bin/magento cache:flush || true
+
+# --- Re-sync the recorded config hash --------------------------------------
+# setup:install rewrites app/etc/config.php inside THIS pod — it appends a
+# `system` section — and records that file's hash in the database. This pod is a
+# Job: it exits, and every long-lived pod still has the image's original
+# config.php, whose hash no longer matches. They would all answer 500 with "The
+# configuration file has changed".
+#
+# So: put the shipped file back, and re-sync the recorded hash to it.
+#
+# The cache flush in between is not optional. Magento caches the deployment
+# config, and immediately after setup:install that cache still describes the
+# mutated file — the importer compares against it, concludes nothing changed,
+# prints "Nothing to import" and leaves the stale hash exactly where it was.
+# Flushing first makes it re-read config.php from disk and actually rewrite the
+# hash ("System config was processed").
+#
+# setup:upgrade rather than app:config:import for the same reason: import only
+# touches the hash when it has content to import, and a pristine config.php has
+# none.
+if [ -f /usr/local/share/config.php.dist ]; then
+  echo "[install] re-syncing config hash to the shipped config.php"
+  cp /usr/local/share/config.php.dist /var/www/html/app/etc/config.php
+  php bin/magento cache:flush >/dev/null 2>&1 || true
+  php bin/magento setup:upgrade --keep-generated --no-interaction
+  php bin/magento cache:flush || true
+fi
+
 echo "[install] done."
