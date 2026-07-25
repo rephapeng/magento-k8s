@@ -77,8 +77,26 @@ kubectl config use-context orbstack
 
 Then, on either:
 ```bash
-./scripts/install-prereqs.sh      # ingress-nginx + metrics-server
+./scripts/install-prereqs.sh      # ingress-nginx + metrics-server + proxy config
 ```
+
+Besides installing the controller, that script patches one setting that the
+deployment does not work without:
+
+```yaml
+# ConfigMap ingress-nginx-controller
+data:
+  use-forwarded-headers: "true"
+```
+
+By default ingress-nginx **overwrites** `X-Forwarded-Proto` with the scheme of
+the connection it received. Behind a tunnel that is always plain `http`, so
+Magento concludes an HTTPS request was insecure, redirects to its HTTPS base URL,
+gets the same `http` again, and loops until the browser gives up. Trusting the
+header is safe here only because the controller is not directly exposed — the
+tunnel is the one way in and is itself the trusted proxy. On an internet-facing
+controller, pair it with `proxy-real-ip-cidr` or any client can forge its own
+scheme and source address.
 
 The chart is cluster-agnostic: `values-minikube.yaml` and `values-orbstack.yaml`
 differ only in `storageClass`.
@@ -87,12 +105,12 @@ differ only in `storageClass`.
 
 The default resource requests total **~1600m CPU / ~4544Mi memory**, which does
 **not** fit a 2-core/4 GB node — the memory requests alone exceed the node's RAM,
-so pods sit `Pending` on *Insufficient memory*. For that case add the small
-overlay, which trims every tier to **~775m / ~2272Mi**:
+so pods sit `Pending` on *Insufficient memory*. Add the small overlay for that
+case:
 
 ```bash
-minikube start --cpus=2 --memory=4096 --disk-size=20g
-minikube addons enable ingress
+minikube start --driver=docker --cpus=2 --memory=3000mb --disk-size=25g
+./scripts/install-prereqs.sh
 
 helm upgrade --install magento charts/magento -n magento --create-namespace \
   -f charts/magento/values.yaml \
@@ -101,12 +119,26 @@ helm upgrade --install magento charts/magento -n magento --create-namespace \
   --set-string domain="$MAGENTO_DOMAIN" ...
 ```
 
+It brings the footprint to **~700m / ~1600Mi** at rest, peaking around
+**950m / 2240Mi** while the one-shot install Job runs alongside everything else.
+The figures are derived from `kubectl top` on a working deployment rather than
+guessed — the per-component numbers are in the overlay's header comment.
+
+Verified: this profile installs and serves on a 2 vCPU / 3.8 GiB Ubuntu 24.04
+VPS, with all six pods Ready 2m24s after `deploy.sh`.
+
 What you give up, stated plainly: 4 PHP-FPM workers (so ~4 concurrent PHP
 requests — fine for a demo, not for load), a 256 MB OpenSearch heap (below
 Elastic's comfort zone; fine for a small catalogue, will GC-thrash on a real
-one), no HPA or PDB, and a noticeably slower first install. The numbers come from
-summing the rendered resource requests; the overlay has not been run on an actual
-2-core VM.
+one), no HPA or PDB, and limits close enough to requests that a real traffic
+spike gets the pod OOM-killed rather than the node swapping to death — on a box
+this size that is the better failure mode, but it is a deliberate choice.
+
+One caveat specific to the docker driver: `--memory=3000mb` caps the minikube
+container's cgroup, but the kubelet inside still reads the *host's* `/proc/meminfo`
+and advertises ~3.9 GiB allocatable. The scheduler will therefore happily place
+more than the cgroup allows. Keeping the workload's requests well under the cap,
+as this overlay does, is what stops that mismatch from turning into an OOM kill.
 
 ## 3. Configure
 
@@ -193,7 +225,87 @@ kubectl -n ingress-nginx port-forward svc/ingress-nginx-controller 8080:80 &
 curl -s -H "Host: magento.local" -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/
 ```
 
-## 7. Verify
+## 7. Deploying to a remote single-node server
+
+Building the app image needs far more CPU and RAM than a small VPS has, so the
+image is built by CI and the server only pulls it. `.github/workflows/build-images.yml`
+builds both images for `linux/amd64` on every push that touches `docker/` and
+pushes them to `ghcr.io/<owner>/{magento-app,magento-nginx}`. Make both packages
+public, or give the cluster an image pull secret.
+
+This also matters if you develop on Apple Silicon: images built locally are
+`arm64` and will not run on an `amd64` server. CI settles that.
+
+On the server:
+
+```bash
+git clone https://github.com/<owner>/magento-k8s.git /opt/magento-k8s
+cd /opt/magento-k8s
+
+minikube start --driver=docker --cpus=2 --memory=3000mb --disk-size=25g --force
+./scripts/install-prereqs.sh
+
+# Pre-pull so the first deploy is not also a 1.3 GB download
+minikube image pull ghcr.io/<owner>/magento-app:2.4.7-p3
+minikube image pull ghcr.io/<owner>/magento-nginx:2.4.7-p3
+```
+
+Point `.env` at the registry and the small-node profile:
+
+```bash
+IMAGE_REGISTRY=ghcr.io/<owner>
+EXTRA_VALUES=charts/magento/values-minikube-small.yaml
+CLUSTER_PROFILE=minikube
+PUBLIC_SCHEME=https          # TLS terminates at Cloudflare, not in the cluster
+CLOUDFLARE_TUNNEL_TOKEN=     # empty: the tunnel runs on the host, not in-cluster
+```
+
+Then `./scripts/deploy.sh`.
+
+### The tunnel, on the host
+
+Running `cloudflared` on the host rather than in-cluster keeps one pod off a
+small node and survives a cluster restart. It reaches the ingress at the
+minikube node IP:
+
+```bash
+curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+  | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main' \
+  | sudo tee /etc/apt/sources.list.d/cloudflared.list
+sudo apt-get update && sudo apt-get install cloudflared
+
+sudo cloudflared service install <TUNNEL_TOKEN>
+```
+
+Then add a Public Hostname on the tunnel pointing at `HTTP` → `<minikube ip>:80`
+(`minikube ip` is typically `192.168.49.2`), and set `MAGENTO_DOMAIN` to that
+hostname.
+
+**Without a domain of your own**, a Quick Tunnel gives you a free
+`*.trycloudflare.com` hostname and real HTTPS with no account at all:
+
+```bash
+cloudflared tunnel --url http://192.168.49.2:80
+# INF |  https://<random-words>.trycloudflare.com   |
+```
+
+Set `MAGENTO_DOMAIN` to that hostname before deploying. Be aware of what you are
+trading away: Cloudflare hands out a **new random hostname every time the process
+restarts**, and Magento stores its base URL in the database — so a restart leaves
+the store answering on a URL it does not believe in. It is fine for a demo, not
+for anything that has to stay up. After such a restart:
+
+```bash
+kubectl -n magento exec deploy/magento-web -c php-fpm -- \
+  php bin/magento config:set web/unsecure/base_url "https://<new-host>/"
+kubectl -n magento exec deploy/magento-web -c php-fpm -- \
+  php bin/magento config:set web/secure/base_url "https://<new-host>/"
+kubectl -n magento exec deploy/magento-web -c php-fpm -- php bin/magento cache:flush
+helm upgrade ... --set-string domain=<new-host>   # so the Ingress host matches too
+```
+
+## 8. Verify
 
 ```bash
 ./scripts/verify.sh
@@ -240,7 +352,7 @@ Resource usage at idle:
 | opensearch-0 | 10m | 976Mi |
 | redis | 3m | 14Mi |
 
-## 8. Persistence and recovery
+## 9. Persistence and recovery
 
 ```bash
 kubectl -n magento delete pod mariadb-0
@@ -249,7 +361,7 @@ kubectl -n magento wait --for=condition=ready pod/mariadb-0 --timeout=180s
 ./scripts/verify.sh                          # catalogue still intact
 ```
 
-## 9. Scaling the web tier
+## 10. Scaling the web tier
 
 ```bash
 kubectl -n magento scale deployment magento-web --replicas=2
@@ -260,7 +372,7 @@ on a shared PVC, static content is baked into the image, cron runs as its own
 single replica, and `lock.provider=db` keeps concurrent maintenance commands from
 colliding. Reasoning in [production-design.md](docs/production-design.md).
 
-## 10. Backup, restore, cleanup
+## 11. Backup, restore, cleanup
 
 ```bash
 ./scripts/backup.sh                       # -> backups/<timestamp>/{db.sql.gz,media.tar.gz}
@@ -314,6 +426,15 @@ A few problems here have non-obvious causes and are worth recording:
   header buffer, in the pod's nginx (`fastcgi_buffer_size`) and again in the
   ingress controller (`proxy-buffer-size`). Both are set explicitly.
 
+- **The install pod's `config.php` poisons every other pod.** `setup:install`
+  rewrites `app/etc/config.php` inside whichever pod runs it and records that
+  file's hash in the database. That pod is a Job — it exits, and every long-lived
+  pod still has the image's original `config.php`, whose hash no longer matches.
+  Magento answers every request with *"The configuration file has changed"* and a
+  500. The install script restores the shipped file from
+  `/usr/local/share/config.php.dist` and runs `app:config:import`, so the
+  recorded hash matches what the running pods actually have.
+
 - **`cp -a` fails in the init container.** Copying the code into the shared
   `emptyDir` with `cp -a src/. /dest/` also stamps the source directory's mode and
   timestamps onto the volume root, which is owned by root — so a non-root uid gets
@@ -358,6 +479,8 @@ A few problems here have non-obvious causes and are worth recording:
   production control under Calico or Cilium.
 - The **OpenSearch security plugin is off**. Acceptable only because the service
   is ClusterIP and never public; production should enable TLS and auth.
-- The **2 vCPU / 4 GB overlay is calculated, not yet measured** on a real small VM.
+- A **Quick Tunnel hostname is not stable** — it changes on every `cloudflared`
+  restart, and Magento stores its base URL in the database. Use a real domain for
+  anything that has to survive a restart.
 - The first `setup:install` takes several minutes. The install Job is idempotent
   and safe to re-run.

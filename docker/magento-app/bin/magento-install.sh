@@ -54,7 +54,16 @@ else
     --page-cache=redis --page-cache-redis-server="${REDIS_HOST}" \
     --page-cache-redis-port="${REDIS_PORT}" --page-cache-redis-db=1 \
     --lock-provider=db \
+    --use-rewrites=1 \
     --no-interaction
+
+  # setup:install rewrote app/etc/config.php in THIS pod (adding scopes, themes
+  # and so on) and recorded that version's hash in the database. Every other pod
+  # still runs the image's original config.php, so they would all fail Magento's
+  # config-change check with a 500. Restoring the shipped file and re-importing
+  # puts the hash on record back in sync with what the running pods have.
+  cp /usr/local/share/config.php.dist /var/www/html/app/etc/config.php
+  php bin/magento app:config:import --no-interaction
 
   php bin/magento config:set web/unsecure/base_url "${MAGENTO_BASE_URL}"
   if [ "${MAGENTO_USE_SECURE}" = "1" ]; then

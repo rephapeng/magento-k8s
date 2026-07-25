@@ -26,6 +26,29 @@ else
     --wait --timeout 5m
 fi
 
+# ---- Trust the proxy's forwarded scheme ----
+# The tunnel terminates TLS at Cloudflare's edge and forwards plain HTTP to this
+# controller with X-Forwarded-Proto: https. By default ingress-nginx does NOT
+# trust that header — it overwrites it with the scheme of the connection it
+# received, i.e. "http". Magento then believes an HTTPS request was insecure,
+# redirects to its https base URL, receives the same "http" again, and loops
+# until the browser gives up.
+#
+# This is safe here because the controller is only reachable from inside the
+# cluster: the sole path in is the tunnel, which is itself the trusted proxy.
+# Do NOT enable it on a controller that is directly exposed to the internet
+# without also restricting proxy-real-ip-cidr — any client could then forge its
+# own scheme and address.
+echo "==> Trusting forwarded headers on ingress-nginx"
+if kubectl -n ingress-nginx get configmap ingress-nginx-controller >/dev/null 2>&1; then
+  kubectl -n ingress-nginx patch configmap ingress-nginx-controller --type merge \
+    -p '{"data":{"use-forwarded-headers":"true"}}'
+  kubectl -n ingress-nginx rollout restart deploy/ingress-nginx-controller
+  kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=180s
+else
+  echo "    (no ingress-nginx-controller ConfigMap found; skipping)"
+fi
+
 # ---- metrics-server (needed for `kubectl top` and HPA) ----
 if kubectl get deploy metrics-server -n kube-system >/dev/null 2>&1; then
   echo "==> metrics-server already present"

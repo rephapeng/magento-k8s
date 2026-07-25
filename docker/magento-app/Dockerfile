@@ -110,6 +110,14 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/magento-install.
 WORKDIR /var/www/html
 COPY --from=build --chown=1000:1000 /var/www/html /var/www/html
 
+# Pristine copy of the shipped config.php. `setup:install` rewrites config.php
+# inside whichever pod runs it and records that version's hash in the database;
+# every other pod still has the image's copy, so they all fail the config-change
+# check with a 500. The install Job restores this file and re-imports, so the
+# hash on record matches what the running pods actually have. See
+# bin/magento-install.sh.
+RUN cp /var/www/html/app/etc/config.php /usr/local/share/config.php.dist
+
 USER magento
 EXPOSE 9000
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
