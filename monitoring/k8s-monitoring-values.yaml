@@ -1,0 +1,86 @@
+# Grafana Cloud monitoring for this cluster — metrics, cluster events and
+# centralised pod logs.
+#
+# This is a deliberately trimmed version of what Grafana Cloud's onboarding
+# wizard generates. The generated config turns on everything: five Alloy
+# collectors, application observability with OTLP receivers, Beyla eBPF
+# auto-instrumentation, eBPF profiling to Pyroscope, OpenCost, Kepler and a
+# Windows exporter. On a 2 vCPU / 4 GB node that is roughly 1.5 GB of collectors
+# competing with the workload they exist to observe — and the first thing the
+# kernel reaps is OpenSearch, the largest pod on the box.
+#
+# What is kept is what the assessment actually asks for: metrics, a dashboard
+# source, and centralised logging. Measured cost of this config: ~300 MiB.
+#
+# Deploy with scripts/install-monitoring.sh, which fills the credentials in from
+# .env. Never put the token in this file — it is committed.
+
+cluster:
+  name: ${GRAFANA_CLUSTER_NAME}
+
+destinations:
+  grafana-cloud-metrics:
+    type: prometheus
+    url: ${GRAFANA_PROM_URL}
+    auth:
+      type: basic
+      username: "${GRAFANA_PROM_USER}"
+      password: ${GRAFANA_CLOUD_TOKEN}
+  grafana-cloud-logs:
+    type: loki
+    url: ${GRAFANA_LOKI_URL}
+    auth:
+      type: basic
+      username: "${GRAFANA_LOKI_USER}"
+      password: ${GRAFANA_CLOUD_TOKEN}
+
+# --- what we collect --------------------------------------------------------
+clusterMetrics:
+  enabled: true
+  collector: alloy-metrics
+clusterEvents:
+  enabled: true
+  collector: alloy-singleton
+podLogsViaLoki:
+  enabled: true
+  collector: alloy-logs
+hostMetrics:
+  enabled: true
+  collector: alloy-metrics
+  linuxHosts: { enabled: true }
+  windowsHosts: { enabled: false }     # Linux node
+  energyMetrics: { enabled: false }    # Kepler needs kernel support this box lacks
+
+# --- what we deliberately do not collect ------------------------------------
+costMetrics: { enabled: false }             # OpenCost: another deployment, no value here
+applicationObservability: { enabled: false } # OTLP receivers: nothing emits traces yet
+autoInstrumentation: { enabled: false }      # Beyla eBPF: expensive, privileged
+profiling: { enabled: false }                # eBPF profiling to Pyroscope: same
+
+telemetryServices:
+  kube-state-metrics: { deploy: true }
+  node-exporter: { deploy: true }
+  windows-exporter: { deploy: false }
+  opencost: { deploy: false }
+  kepler: { deploy: false }
+
+# --- collectors -------------------------------------------------------------
+# `singleton` rather than the wizard's `clustered`+`statefulset` for metrics:
+# clustering exists to shard scrape targets across replicas, which is pointless
+# on one node and costs a second Alloy.
+collectors:
+  alloy-metrics:
+    presets: [singleton]
+    resources:
+      requests: { cpu: 50m, memory: 160Mi }
+      limits:   { memory: 320Mi }
+  alloy-singleton:
+    presets: [singleton]
+    resources:
+      requests: { cpu: 20m, memory: 80Mi }
+      limits:   { memory: 160Mi }
+  alloy-logs:
+    presets: [filesystem-log-reader, daemonset]
+    resources:
+      requests: { cpu: 30m, memory: 100Mi }
+      limits:   { memory: 200Mi }

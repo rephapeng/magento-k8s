@@ -14,8 +14,10 @@ machine-local setup steps.
 | **Cache / sessions** | Redis `7.2` |
 | **Web** | nginx `1.27` + PHP-FPM, in separate containers |
 | **Ingress** | ingress-nginx |
-| **Public exposure + TLS** | Cloudflare Tunnel (TLS at the edge, no public IP or open port) |
+| **Public exposure + TLS** | Cloudflare Tunnel, **or** Caddy + Let's Encrypt on a public-IP host |
 | **Packaging** | Helm chart (`charts/magento`) |
+
+Live at **<https://magento.devtocash.com>** on a 2 vCPU / 4 GB VPS.
 
 Further reading:
 **[test results](docs/test-results.md)** ·
@@ -30,19 +32,25 @@ served over a tunnel.
 
 ---
 
-## Two ways to expose it
+## Three ways to expose it
 
-The chart supports both, and picks one automatically from your `.env`:
-
-| Mode | When | What happens |
+| Mode | Set in `.env` | What happens |
 |---|---|---|
-| **Public HTTPS** | `CLOUDFLARE_TUNNEL_TOKEN` set | `cloudflared` runs in-cluster and dials out to Cloudflare. TLS terminates at the edge; `publicScheme=https`. |
-| **Local only** | token empty | `cloudflared` is disabled and `publicScheme=http`; you reach the ingress directly on a `*.local` hostname. |
+| **Cloudflare Tunnel** | `CLOUDFLARE_TUNNEL_TOKEN` set | `cloudflared` dials *out* to Cloudflare. TLS at the edge, no inbound port, no public IP needed. Requires the domain's DNS to be on Cloudflare. |
+| **Reverse proxy + Let's Encrypt** | token empty, `PUBLIC_SCHEME=https` | Caddy on a public-IP host terminates TLS and proxies to the ingress. Works with DNS anywhere — just an A record. Opens 80/443. |
+| **Local only** | token empty, `PUBLIC_SCHEME` unset | `publicScheme=http`; reach the ingress directly on a `*.local` hostname. |
 
-The distinction matters more than it looks. Magento bakes the scheme into its
-`base_url` and its `use_secure` flags, so pointing a plain-HTTP client at an
-instance installed as HTTPS gets you a redirect loop into a port nothing is
-listening on. `publicScheme` drives both consistently.
+The live deployment uses the middle one, because `devtocash.com` is served by its
+registrar's DNS. A Cloudflare Tunnel public hostname resolves to
+`<tunnel-id>.cfargotunnel.com`, which only exists inside Cloudflare's DNS — so
+the tunnel route would have meant migrating the whole zone's nameservers, apex
+record and all, for no functional gain. Both are explicitly permitted by the
+brief. Setup for the proxy route is in §7.
+
+Whichever you pick, `publicScheme` is what keeps Magento consistent. It bakes the
+scheme into `base_url` and its `use_secure` flags, so pointing a plain-HTTP
+client at an instance installed as HTTPS gets you a redirect loop into a port
+nothing is listening on.
 
 ---
 
@@ -288,6 +296,80 @@ Then add a Public Hostname on the tunnel pointing at `HTTP` → `<minikube ip>:8
 (`minikube ip` is typically `192.168.49.2`), and set `MAGENTO_DOMAIN` to that
 hostname.
 
+### Or: reverse proxy + Let's Encrypt (what the live deployment runs)
+
+If the domain's DNS lives somewhere other than Cloudflare, this is the shorter
+path — one A record, no nameserver migration:
+
+```
+A    magento    ->    <your VPS public IP>
+```
+
+Then on the host:
+
+```bash
+sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+  | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+  | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt-get update && sudo apt-get install -y caddy
+```
+
+`/etc/caddy/Caddyfile` — Caddy obtains and renews the certificate itself, and
+redirects HTTP to HTTPS without being told to:
+
+```caddyfile
+magento.example.com {
+    reverse_proxy 192.168.49.2:80     # minikube ip; ingress-nginx listens there
+    encode gzip
+}
+```
+
+```bash
+sudo systemctl enable --now caddy
+sudo systemctl restart caddy          # `enable --now` will not reload a running instance
+```
+
+Set `MAGENTO_DOMAIN` to that hostname and `PUBLIC_SCHEME=https`, leave
+`CLOUDFLARE_TUNNEL_TOKEN` empty, and deploy.
+
+Two things worth knowing. Caddy's systemd unit sandboxes its writable paths, so
+a `log { output file ... }` directive fails with *permission denied* unless the
+directory is added to `ReadWritePaths` — journald is simpler. And listing several
+hostnames in one site block gets a certificate covering all of them, which is a
+cheap way to keep a fallback name working.
+
+### Surviving a reboot
+
+Three units have to come back on their own, and minikube ships no service file:
+
+```bash
+sudo systemctl enable docker caddy
+sudo tee /etc/systemd/system/minikube.service >/dev/null <<'EOF'
+[Unit]
+Description=minikube cluster
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Environment=MINIKUBE_HOME=/root/.minikube
+ExecStart=/usr/local/bin/minikube start
+ExecStop=/usr/local/bin/minikube stop
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload && sudo systemctl enable minikube
+```
+
+`minikube start` with no flags reuses the existing profile, so the cpu and memory
+limits chosen at creation survive the restart.
+
 **Without a domain of your own**, a Quick Tunnel gives you a free
 `*.trycloudflare.com` hostname and real HTTPS with no account at all:
 
@@ -358,7 +440,67 @@ Resource usage at idle:
 | opensearch-0 | 10m | 976Mi |
 | redis | 3m | 14Mi |
 
-## 9. Persistence and recovery
+## 9. Monitoring with Grafana Cloud *(optional)*
+
+Nice to have, not required — the deployment is complete without it. It ships
+cluster and host metrics, Kubernetes events, and **centralised pod logs** to
+Grafana Cloud through Grafana Alloy, which is what turns `kubectl logs` into
+something you can query across restarts.
+
+```bash
+./scripts/install-monitoring.sh
+```
+
+### Getting the credentials
+
+You need five values, all from a free Grafana Cloud account:
+
+1. Sign up at <https://grafana.com> and open your stack.
+2. **Connections → Add new connection → Kubernetes**, then start the guided
+   install. It generates a Helm command containing everything below.
+3. From that generated command, copy into `.env`:
+
+| `.env` variable | Where it is in the generated snippet |
+|---|---|
+| `GRAFANA_PROM_URL` | `destinations.grafana-cloud-metrics.url` |
+| `GRAFANA_PROM_USER` | the numeric `username` under that destination |
+| `GRAFANA_LOKI_URL` | `destinations.grafana-cloud-logs.url` |
+| `GRAFANA_LOKI_USER` | the numeric `username` under that destination |
+| `GRAFANA_CLOUD_TOKEN` | the `glc_...` password — the same token is used for both |
+
+The two usernames are **different numbers** — they are per-service instance IDs,
+not your account ID. Copy each from its own block.
+
+To mint the token by hand instead: **Administration → Users and access → Access
+Policies → Create access policy**, scopes `metrics:write` and `logs:write`, then
+add a token to it. `.env` is git-ignored, so the token is never committed.
+
+### What is deliberately turned off
+
+Grafana's wizard generates a config that enables everything — five Alloy
+collectors, OTLP receivers, Beyla eBPF auto-instrumentation, eBPF profiling to
+Pyroscope, OpenCost, Kepler, a Windows exporter. On a 2 vCPU / 4 GB node that is
+roughly 1.5 GB of collectors competing with the workload they exist to observe,
+and the first thing the kernel reaps is OpenSearch — the largest pod on the box.
+
+[`monitoring/k8s-monitoring-values.yaml`](monitoring/k8s-monitoring-values.yaml)
+keeps metrics, events and logs, and drops the rest. Measured cost:
+
+| Pod | CPU | Memory |
+|---|---|---|
+| alloy-metrics | 60m | 172Mi |
+| alloy-operator | 77m | 47Mi |
+| kube-state-metrics | 6m | 15Mi |
+| node-exporter | 1m | 3Mi |
+| alloy-logs, alloy-singleton | — | ~60Mi combined |
+
+About **300 MiB total**, against ~1 GB of headroom. Verified after install: all
+Magento pods stayed Running and Alloy reported no send errors.
+
+If you have a bigger node, the wizard's full config is the better starting point
+— tracing and profiling are genuinely useful, just not affordable here.
+
+## 10. Persistence and recovery
 
 ```bash
 kubectl -n magento delete pod mariadb-0
@@ -367,7 +509,7 @@ kubectl -n magento wait --for=condition=ready pod/mariadb-0 --timeout=180s
 ./scripts/verify.sh                          # catalogue still intact
 ```
 
-## 10. Scaling the web tier
+## 11. Scaling the web tier
 
 ```bash
 kubectl -n magento scale deployment magento-web --replicas=2
@@ -378,7 +520,7 @@ on a shared PVC, static content is baked into the image, cron runs as its own
 single replica, and `lock.provider=db` keeps concurrent maintenance commands from
 colliding. Reasoning in [production-design.md](docs/production-design.md).
 
-## 11. Backup, restore, cleanup
+## 12. Backup, restore, cleanup
 
 ```bash
 ./scripts/backup.sh                       # -> backups/<timestamp>/{db.sql.gz,media.tar.gz}

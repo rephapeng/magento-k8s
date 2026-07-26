@@ -12,9 +12,10 @@ what the environment returned when the commands were run against it.
 | Cluster | minikube v1.38.1, Kubernetes v1.35.1, docker driver, `--cpus=2 --memory=3000mb` |
 | Images | `ghcr.io/rephapeng/magento-app:2.4.7-p3`, `ghcr.io/rephapeng/magento-nginx:2.4.7-p3` (built by GitHub Actions, `linux/amd64`) |
 | Values | `values.yaml` + `values-minikube.yaml` + `values-minikube-small.yaml` |
-| Public URL | `https://sullivan-lines-knights-chevy.trycloudflare.com` |
+| Public URL | `https://magento.devtocash.com` (Caddy + Let's Encrypt on the host, proxying to ingress-nginx) |
 | Admin path | `/admin_c87bc2` (non-default, generated per environment) |
 | Commit | `c8d2402` |
+| Monitoring | Grafana Cloud via Grafana Alloy (metrics, cluster events, pod logs) |
 
 The whole run below is against a deployment created from scratch — namespace
 deleted, image re-pulled, `./scripts/deploy.sh` — with no manual fix-ups
@@ -81,7 +82,7 @@ opensearch    ClusterIP   None           9200
 redis         ClusterIP   None           6379
 
 NAME      CLASS   HOSTS                                            ADDRESS        PORTS
-magento   nginx   sullivan-lines-knights-chevy.trycloudflare.com   192.168.49.2   80
+magento   nginx   magento.devtocash.com   192.168.49.2   80
 
 configmap/magento-config   25 keys
 secret/magento-secret      Opaque   4 keys
@@ -137,7 +138,7 @@ kubectl -n magento exec deploy/magento-web -c php-fpm -- find /var/www/html/pub/
 ```
 Magento CLI 2.4.7-p3
 Current application mode: production.
-https://sullivan-lines-knights-chevy.trycloudflare.com/     <- base_url is the public domain
+https://magento.devtocash.com/     <- base_url is the public domain
 opensearch                                                  <- search engine wired
 cache=Redis  session=redis
 config: 1   layout: 1   block_html: 1   collections: 1   reflection: 1     <- all cache types enabled
@@ -159,10 +160,10 @@ deployed, cache is on Redis, and there is a product.
 **How**
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://sullivan-lines-knights-chevy.trycloudflare.com/
-curl -s -o /dev/null -w "%{http_code}\n" https://sullivan-lines-knights-chevy.trycloudflare.com/demo-product.html
-curl -sL -o /dev/null -w "%{http_code}\n" https://sullivan-lines-knights-chevy.trycloudflare.com/admin_c87bc2
-curl -s -D - -o /dev/null http://sullivan-lines-knights-chevy.trycloudflare.com/
+curl -s -o /dev/null -w "%{http_code}\n" https://magento.devtocash.com/
+curl -s -o /dev/null -w "%{http_code}\n" https://magento.devtocash.com/demo-product.html
+curl -sL -o /dev/null -w "%{http_code}\n" https://magento.devtocash.com/admin_c87bc2
+curl -s -D - -o /dev/null http://magento.devtocash.com/
 ```
 
 **Result**
@@ -173,11 +174,20 @@ curl -s -D - -o /dev/null http://sullivan-lines-knights-chevy.trycloudflare.com/
 | `/demo-product.html` | **200** (53,565 B) | `<title>Demo Product</title>` |
 | `/admin_c87bc2` | **200** (8,063 B, after one redirect) | `<title>Magento Admin</title>` |
 
-HTTP → HTTPS:
+HTTP → HTTPS, issued by Caddy before anything reaches the cluster:
 
 ```
-HTTP/1.1 302 Found
-Location: https://sullivan-lines-knights-chevy.trycloudflare.com/
+HTTP/1.1 308 Permanent Redirect
+Location: https://magento.devtocash.com/
+Server: Caddy
+```
+
+Certificate:
+
+```
+issuer  = C=US, O=Let's Encrypt, CN=YE1
+subject = CN=magento.devtocash.com
+notAfter= Oct 24 02:05:22 2026 GMT
 ```
 
 The admin's intermediate `302` carries a per-session secret key
@@ -195,18 +205,27 @@ not through `kubectl port-forward`.
 
 ```
 Browser
-  └── HTTPS ──> Cloudflare edge            TLS terminates here
-        └── QUIC tunnel (outbound only) ──> cloudflared (systemd, on the host)
-              └── HTTP ──> 192.168.49.2:80  minikube node IP
-                    └── ingress-nginx       host rule -> magento-web
-                          └── Service magento-web:80 (ClusterIP)
-                                └── pod: nginx :8080
-                                      └── FastCGI 127.0.0.1:9000 -> php-fpm
-                                            └── MariaDB / OpenSearch / Redis (ClusterIP)
+  └── HTTPS :443 ──> Caddy (systemd, on the host)      TLS terminates here
+        │                                              Let's Encrypt, auto-renewed
+        │                                              :80 -> :443 redirect (308)
+        └── HTTP ──> 192.168.49.2:80   minikube node IP
+              └── ingress-nginx         host rule -> magento-web
+                    │                   use-forwarded-headers: passes X-Forwarded-Proto
+                    └── Service magento-web:80 (ClusterIP)
+                          └── pod: nginx :8080
+                                └── FastCGI 127.0.0.1:9000 -> php-fpm
+                                      └── MariaDB / OpenSearch / Redis (ClusterIP)
 ```
 
-No inbound port is open on the VPS for the store — `cloudflared` dials *out* to
-Cloudflare. Verified: `ss -ltnp` shows nothing listening on 3306, 9200 or 6379.
+Only 80 and 443 are open on the VPS. Verified: `ss -ltn` shows nothing listening
+on 3306, 9200 or 6379, and every data-tier Service is a headless ClusterIP with
+no cluster-wide address to dial at all.
+
+The chart also supports the Cloudflare Tunnel route, where `cloudflared` dials
+*out* and no inbound port is open at all. That was the original design and is
+verified working; the live deployment uses Caddy because `devtocash.com` is
+served by its registrar's DNS, and a tunnel public hostname resolves only inside
+Cloudflare's DNS — taking that route would have meant migrating the whole zone.
 
 ---
 
@@ -547,7 +566,48 @@ for GC pressure and circuit breaker trips before assuming data loss.
 | Automatic TLS | Done, at the Cloudflare edge |
 | Zero-downtime deploys | Rolling update + readiness gating; demonstrated by the 2-replica rollout in §7 |
 | Image vulnerability scanning | **Not implemented** |
-| Metrics / dashboards / centralised logging | **Not implemented** — `kubectl top` via metrics-server only |
+| Metrics / dashboards / centralised logging | Done — Grafana Cloud via Alloy (see §12a) |
+
+---
+
+## 12a. Monitoring
+
+Grafana Alloy ships cluster metrics, host metrics, Kubernetes events and pod logs
+to Grafana Cloud. Installed with `./scripts/install-monitoring.sh`.
+
+```
+$ kubectl -n monitoring get pods
+grafana-k8s-monitoring-alloy-logs-gv5hb                     2/2   Running
+grafana-k8s-monitoring-alloy-metrics-69877c47cc-4rknn       2/2   Running
+grafana-k8s-monitoring-alloy-operator-fddfd7d48-8n4k9       1/1   Running
+grafana-k8s-monitoring-alloy-singleton-54d7db48bf-hpm54     2/2   Running
+grafana-k8s-monitoring-kube-state-metrics-b66bc8ffb-wnnvj   1/1   Running
+grafana-k8s-monitoring-node-exporter-fsp8p                  1/1   Running
+
+$ kubectl -n monitoring logs deploy/...-alloy-metrics -c alloy | grep -iE 'error|401|403'
+(no output)
+
+$ kubectl -n monitoring logs deploy/...-alloy-metrics -c alloy | grep remote_write
+"Done replaying WAL" url=https://prometheus-prod-52-....grafana.net/api/prom/push
+```
+
+Cost, measured after install — about **300 MiB**, against ~1 GiB of headroom:
+
+| Pod | CPU | Memory |
+|---|---|---|
+| alloy-metrics | 60m | 172Mi |
+| alloy-operator | 77m | 47Mi |
+| kube-state-metrics | 6m | 15Mi |
+| node-exporter | 1m | 3Mi |
+
+All Magento pods stayed Running throughout.
+
+This is a deliberately trimmed config. Grafana Cloud's wizard generates one that
+enables five Alloy collectors, OTLP receivers, Beyla eBPF auto-instrumentation,
+eBPF profiling, OpenCost, Kepler and a Windows exporter — roughly 1.5 GB on a box
+with 1 GB free, where the first thing the kernel would reap is OpenSearch, the
+largest pod present. Reasoning and the exact toggles are in
+`monitoring/k8s-monitoring-values.yaml`.
 
 ---
 
@@ -555,11 +615,10 @@ for GC pressure and circuit breaker trips before assuming data loss.
 
 Stated plainly, because they are real and a reviewer will find them:
 
-1. **The public hostname is ephemeral.** A Cloudflare Quick Tunnel issues a new
-   random `*.trycloudflare.com` name every time `cloudflared` restarts, and
-   Magento stores its base URL in the database — so a restart leaves the store
-   answering on a URL it does not believe in. A named tunnel on a real domain
-   fixes this; the recovery procedure is in the README.
+1. **TLS terminates on the host, not in the cluster.** Caddy owns the
+   certificate, so ports 80 and 443 are open on the VPS. The Cloudflare Tunnel
+   route avoids that entirely — no inbound port — but needs the domain's DNS on
+   Cloudflare. Both are permitted by the brief; this is a trade, not an oversight.
 2. **NetworkPolicy is not enforced** by minikube's default CNI. The policies
    exist in the chart but are off here, so this is a design statement, not a
    demonstrated control.
