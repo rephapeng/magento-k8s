@@ -34,7 +34,16 @@ spec:
         {{- include "magento.labels" . | nindent 8 }}
         component: mariadb
     spec:
+      # Run as the image's own mysql user (999) rather than root. The official
+      # entrypoint normally starts as root purely to chown the data directory and
+      # then drops privileges itself — fsGroup makes the PVC group-writable for
+      # 999 up front, so that step is unnecessary and PID 1 is never root.
+      # Note this only works on a volume initialised this way; a datadir that was
+      # first written by root needs chown -R 999:999 before switching over.
       securityContext:
+        runAsUser: 999          # mysql user in the official image
+        runAsGroup: 999
+        runAsNonRoot: true
         fsGroup: 999            # mysql group in the official image
       containers:
         - name: mariadb
