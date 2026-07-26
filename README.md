@@ -18,9 +18,15 @@ machine-local setup steps.
 | **Packaging** | Helm chart (`charts/magento`) |
 
 Further reading:
+**[test results](docs/test-results.md)** ·
 [architecture](architecture/architecture.md) ·
 [troubleshooting runbook](docs/troubleshooting.md) ·
 [production design & trade-offs](docs/production-design.md)
+
+[`docs/test-results.md`](docs/test-results.md) walks every acceptance criterion
+with the command used and the output it returned, on a live 2 vCPU / 4 GB
+deployment — including the eight defects that only showed up once it was actually
+served over a tunnel.
 
 ---
 
