@@ -485,7 +485,7 @@ A few problems here have non-obvious causes and are worth recording:
 
 - The media PVC is **RWO**, which is fine on one node. A multi-node cluster needs
   RWX (EFS, Filestore, NFS) — covered in the production design doc.
-- **NetworkPolicy ships disabled locally** because OrbStack's default flannel CNI
+- **NetworkPolicy ships disabled** because neither OrbStack nor minikube's default CNI
   does not enforce it. The policies are in the chart and are the intended
   production control under Calico or Cilium.
 - The **OpenSearch security plugin is off**. Acceptable only because the service
@@ -495,3 +495,30 @@ A few problems here have non-obvious causes and are worth recording:
   anything that has to survive a restart.
 - The first `setup:install` takes several minutes. The install Job is idempotent
   and safe to re-run.
+- **Not implemented:** container image vulnerability scanning, and centralised
+  metrics/logging beyond `kubectl top` via metrics-server.
+
+## Machines used
+
+| Role | Spec |
+|---|---|
+| Development | macOS (Apple Silicon), 12 vCPU / 24 GB, OrbStack Kubernetes |
+| Image build | GitHub Actions `ubuntu-latest` — needed for `linux/amd64` output |
+| Deployment target | Linode VPS, Ubuntu 24.04, **2 vCPU / 3.8 GiB RAM**, 79 GB disk |
+
+## Estimated effort
+
+Roughly **two and a half days**:
+
+| Phase | Time |
+|---|---|
+| Chart, images, install flow | ~1 day |
+| Scripts, docs, local verification | ~0.5 day |
+| Tunnel, TLS, security hardening | ~0.5 day |
+| Deploying to the 2-core VPS and debugging what only broke there | ~0.5 day |
+
+That last half day is the honest one. Eight defects only appeared once the store
+was served over a real tunnel on a small node rather than over plain HTTP on a
+laptop — two undersized header buffers, an `X-Forwarded-Proto` the ingress
+rewrote, and a config hash recorded by a pod that no longer exists. They are
+listed with root causes in [docs/test-results.md](docs/test-results.md).
