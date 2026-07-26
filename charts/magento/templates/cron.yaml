@@ -1,7 +1,7 @@
 {{- if .Values.cron.enabled }}
 # Magento cron: indexers, scheduled jobs, and message-queue consumers. Runs as
 # a SINGLE dedicated replica (never scale this with the web tier) so scheduled
-# jobs are not executed concurrently by multiple pods (requirement 3.5).
+# jobs are not executed concurrently by multiple pods.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

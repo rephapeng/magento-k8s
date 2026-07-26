@@ -98,7 +98,7 @@ kubectl -n magento exec mariadb-0 -- \
 
 The recreated pod re-attaches the same `data-mariadb-0` PVC, so all rows are still
 there. Storefront returns to normal once the pod is Ready (Magento reconnects
-automatically). This is the demo in requirement 3.4.
+automatically).
 
 ---
 

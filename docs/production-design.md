@@ -20,7 +20,7 @@ Kubernetes (EKS/GKE/AKS), and the reasoning.
 | Images | Built locally | Registry (ECR/GCR) + scanning + signing, pinned digests |
 | Observability | `kubectl logs/top` | Prometheus+Grafana, Loki, alerting, tracing |
 
-## Scaling the web tier to N replicas (requirement 3.5)
+## Scaling the web tier to N replicas
 
 `kubectl -n magento scale deployment magento-web --replicas=2` is safe here
 **because the web tier is stateless**. The prerequisites, and how each is met:
@@ -49,7 +49,7 @@ Also enable the **HPA** (`hpa.enabled=true`, needs metrics-server) and the **PDB
 - **Restore**: `scripts/restore.sh backups/<ts>` reloads the dump, untars media, then
   flushes cache and reindexes.
 
-## Security hardening (requirement 3.6 + bonus)
+## Security hardening
 
 - Dedicated non-root DB user for Magento (`magento`), root only for admin tasks.
 - Data-tier Services are `ClusterIP` (headless) — never internet-reachable.

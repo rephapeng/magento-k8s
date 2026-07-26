@@ -1,7 +1,6 @@
 # -----------------------------------------------------------------------------
 # Magento web tier.
-# One Pod runs two single-purpose containers (PHP-FPM split from the web server,
-# as invited by the assessment):
+# One Pod runs two single-purpose containers:
 #   * php-fpm  : executes Magento PHP (listens 127.0.0.1:9000)
 #   * nginx    : serves static/media + proxies dynamic requests to php-fpm
 # The Magento codebase is baked into the app image (compiled DI + deployed
@@ -37,7 +36,7 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0        # zero-downtime rollout (bonus 8)
+      maxUnavailable: 0        # zero-downtime rollout
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "magento.name" . }}

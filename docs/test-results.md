@@ -1,8 +1,8 @@
 # Test Results
 
-Every acceptance criterion from the assessment brief, with the command used and
-the output it produced. Nothing here is a summary of what should happen — it is
-what the environment returned when the commands were run against it.
+Every capability this deployment claims, with the command used to check it and
+the output that came back. Nothing here is a summary of what should happen — it
+is what the environment returned when the commands were run against it.
 
 ## Environment under test
 
@@ -56,7 +56,7 @@ fixed, which is what gives the "repeatable" claim its evidence.
 
 ---
 
-## 2. Kubernetes resources (brief §3.1)
+## 2. Kubernetes resources
 
 **How**
 
@@ -120,7 +120,7 @@ into a restart loop.
 
 ---
 
-## 3. Magento is functional (brief §3.2)
+## 3. Magento is functional
 
 **How**
 
@@ -155,7 +155,7 @@ deployed, cache is on Redis, and there is a product.
 
 ---
 
-## 4. Public HTTPS and HTTP redirect (brief §3.3, §7)
+## 4. Public HTTPS and HTTP redirect
 
 **How**
 
@@ -229,7 +229,7 @@ Cloudflare's DNS — taking that route would have meant migrating the whole zone
 
 ---
 
-## 6. Persistence and recovery (brief §3.4)
+## 6. Persistence and recovery
 
 To prove data *survives* rather than being recreated, a marker row was written
 first, and the PV identity was compared before and after.
@@ -278,7 +278,7 @@ and the same PV is reattached rather than a fresh one provisioned.
 
 ---
 
-## 7. Scaling the web tier (brief §3.5)
+## 7. Scaling the web tier
 
 **How**
 
@@ -304,8 +304,8 @@ req1: 200  req2: 200  req3: 200  req4: 200     <- storefront across repeated req
 
 Host memory with two replicas: 2112 MiB used of 3915 MiB.
 
-**Why two replicas are actually safe here** — the prerequisites the brief asks
-about, and where each is handled:
+**Why two replicas are actually safe here** — every piece of state that would
+otherwise be pod-local, and where it lives instead:
 
 | Concern | How it is satisfied |
 |---|---|
@@ -321,7 +321,7 @@ about, and where each is handled:
 
 ---
 
-## 8. Security (brief §3.6)
+## 8. Security
 
 **How**
 
@@ -407,7 +407,7 @@ than three more lines in the install script.
 
 ---
 
-## 10. Observability (brief §3.7)
+## 10. Observability
 
 **How and result**
 
@@ -453,7 +453,7 @@ cluster cannot place replica shards, so it is never green. Red would mean
 
 ---
 
-## 11. Troubleshooting playbook (brief §5)
+## 11. Troubleshooting playbook
 
 Two of these were not hypothetical during this build — 502 and the config-hash
 500 both actually happened, and the investigation below is the one that was used.
@@ -553,7 +553,7 @@ for GC pressure and circuit breaker trips before assuming data loss.
 
 ---
 
-## 12. Bonus items (brief §8)
+## 12. Optional extras
 
 | Item | Status |
 |---|---|
@@ -564,7 +564,7 @@ for GC pressure and circuit breaker trips before assuming data loss.
 | CI/CD pipeline | Done — GitHub Actions builds both images for `linux/amd64` and pushes to ghcr.io on every push touching `docker/` |
 | Custom efficient image | Done — multi-stage; the build toolchain and Composer never reach the runtime layer |
 | Automatic TLS | Done, at the Cloudflare edge |
-| Zero-downtime deploys | Rolling update + readiness gating; demonstrated by the 2-replica rollout in §7 |
+| Zero-downtime deploys | Rolling update + readiness gating; shown by the 2-replica rollout in §7 |
 | Image vulnerability scanning | **Not implemented** |
 | Metrics / dashboards / centralised logging | Done — Grafana Cloud via Alloy (see §12a) |
 
@@ -613,12 +613,12 @@ largest pod present. Reasoning and the exact toggles are in
 
 ## 13. Known limitations
 
-Stated plainly, because they are real and a reviewer will find them:
+Stated plainly, because they are real and someone will hit them:
 
 1. **TLS terminates on the host, not in the cluster.** Caddy owns the
    certificate, so ports 80 and 443 are open on the VPS. The Cloudflare Tunnel
    route avoids that entirely — no inbound port — but needs the domain's DNS on
-   Cloudflare. Both are permitted by the brief; this is a trade, not an oversight.
+   Cloudflare. This is a trade, not an oversight.
 2. **NetworkPolicy is not enforced** by minikube's default CNI. The policies
    exist in the chart but are off here, so this is a design statement, not a
    demonstrated control.
@@ -639,9 +639,9 @@ Stated plainly, because they are real and a reviewer will find them:
 
 ---
 
-## 14. Acceptance criteria summary
+## 14. Summary
 
-| Area | Criterion | Status |
+| Area | Check | Status |
 |---|---|---|
 | Public HTTPS | Storefront over public HTTPS, HTTP redirected | **PASS** — §4 |
 | Magento works | Homepage, product page, admin panel all open | **PASS** — §3, §4 |
@@ -649,4 +649,4 @@ Stated plainly, because they are real and a reviewer will find them:
 | Data persists | Product and app data survive pod re-creation | **PASS** — §6 |
 | No secret leak | Repository free of credentials and live tokens | **PASS** — §8 |
 | Repeatable | Deployment reproducible from automation and docs | **PASS** — §1 |
-| Architecture understanding | Traffic path, dependencies, failure modes, minikube limits | §5, §9, §11, §13 |
+| Architecture | Traffic path, dependencies, failure modes, minikube limits documented | §5, §9, §11, §13 |

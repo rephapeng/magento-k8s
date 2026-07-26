@@ -1,7 +1,7 @@
 <?php
 /**
  * Creates ONE simple, visible, in-stock demo product so the storefront has at
- * least one openable product (requirement 3.2). Runs offline via Magento's
+ * least one openable product. Runs offline via Magento's
  * bootstrap - no web server required - so it is safe inside the install Job.
  */
 require '/var/www/html/app/bootstrap.php';

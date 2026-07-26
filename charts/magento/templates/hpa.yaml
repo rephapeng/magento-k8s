@@ -1,5 +1,5 @@
 {{- if .Values.hpa.enabled }}
-# HorizontalPodAutoscaler for the web tier (bonus 8). Requires metrics-server.
+# HorizontalPodAutoscaler for the web tier. Requires metrics-server.
 # Safe to enable because the web tier is stateless (session+cache in Redis,
 # media on a shared PVC). Never target the cron Deployment with an HPA.
 apiVersion: autoscaling/v2

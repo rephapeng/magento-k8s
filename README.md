@@ -45,7 +45,7 @@ registrar's DNS. A Cloudflare Tunnel public hostname resolves to
 `<tunnel-id>.cfargotunnel.com`, which only exists inside Cloudflare's DNS — so
 the tunnel route would have meant migrating the whole zone's nameservers, apex
 record and all, for no functional gain. Both are explicitly permitted by the
-brief. Setup for the proxy route is in §7.
+chart. Setup for the proxy route is in §7.
 
 Whichever you pick, `publicScheme` is what keeps Magento consistent. It bakes the
 scheme into `base_url` and its `use_secure` flags, so pointing a plain-HTTP
@@ -648,9 +648,9 @@ A few problems here have non-obvious causes and are worth recording:
 | Image build | GitHub Actions `ubuntu-latest` — needed for `linux/amd64` output |
 | Deployment target | Linode VPS, Ubuntu 24.04, **2 vCPU / 3.8 GiB RAM**, 79 GB disk |
 
-## Estimated effort
+## How this was built
 
-Roughly **two and a half days**:
+Roughly two and a half days of work:
 
 | Phase | Time |
 |---|---|
@@ -659,8 +659,8 @@ Roughly **two and a half days**:
 | Tunnel, TLS, security hardening | ~0.5 day |
 | Deploying to the 2-core VPS and debugging what only broke there | ~0.5 day |
 
-That last half day is the honest one. Eight defects only appeared once the store
-was served over a real tunnel on a small node rather than over plain HTTP on a
-laptop — two undersized header buffers, an `X-Forwarded-Proto` the ingress
+That last half day is the interesting one. Eight defects only appeared once the
+store was served over a real tunnel on a small node rather than over plain HTTP
+on a laptop — two undersized header buffers, an `X-Forwarded-Proto` the ingress
 rewrote, and a config hash recorded by a pod that no longer exists. They are
 listed with root causes in [docs/test-results.md](docs/test-results.md).

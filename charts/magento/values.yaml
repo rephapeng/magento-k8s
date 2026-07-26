@@ -42,7 +42,8 @@ domain: magento.example.com
 #            request to an https URL nothing is listening on.
 publicScheme: https
 
-# Non-default admin path (security requirement 3.6). Overridable per-env.
+# Non-default admin path: keeps the admin off the guessable default.
+# Overridable per-env.
 # Final admin URL => <publicScheme>://<domain>/<adminPath>
 adminPath: "admin_a1b2c3"
 
@@ -141,7 +142,7 @@ cron:
 # -----------------------------------------------------------------------------
 mariadb:
   image: mariadb:10.6
-  # Magento uses a DEDICATED, non-root DB user (security requirement 3.6).
+  # Magento uses a DEDICATED, non-root DB user.
   database: magento
   user: magento
   storage:
@@ -204,7 +205,7 @@ cloudflared:
     limits: { memory: "128Mi" }
 
 # -----------------------------------------------------------------------------
-# Reliability / scaling extras (bonus)
+# Reliability / scaling extras
 # -----------------------------------------------------------------------------
 hpa:
   enabled: false

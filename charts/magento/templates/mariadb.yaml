@@ -1,12 +1,12 @@
 # MariaDB as a StatefulSet: stable network id + stable per-replica PVC via
-# volumeClaimTemplates. Data survives pod deletion (requirement 3.4).
+# volumeClaimTemplates. Data survives pod deletion.
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "magento.mariadbHost" . }}
   labels: {{- include "magento.labels" . | nindent 4 }}
 spec:
-  # Internal only (ClusterIP). Never reachable from the internet (3.6).
+  # Internal only (ClusterIP). Never reachable from the internet.
   clusterIP: None
   selector:
     app.kubernetes.io/name: {{ include "magento.name" . }}

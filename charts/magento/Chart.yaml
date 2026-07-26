@@ -6,8 +6,6 @@ type: application
 version: 1.0.0
 # The Magento Open Source release this chart is designed and tested against.
 appVersion: "2.4.7-p3"
-maintainers:
-  - name: Cloud Operations Candidate
 keywords:
   - magento
   - ecommerce

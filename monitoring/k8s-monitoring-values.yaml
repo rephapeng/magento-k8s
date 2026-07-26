@@ -9,7 +9,7 @@
 # competing with the workload they exist to observe — and the first thing the
 # kernel reaps is OpenSearch, the largest pod on the box.
 #
-# What is kept is what the assessment actually asks for: metrics, a dashboard
+# What is kept is what this deployment actually needs: metrics, a dashboard
 # source, and centralised logging. Measured cost of this config: ~300 MiB.
 #
 # Deploy with scripts/install-monitoring.sh, which fills the credentials in from

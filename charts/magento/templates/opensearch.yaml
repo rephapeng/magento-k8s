@@ -1,13 +1,13 @@
 # OpenSearch 2.x (Magento 2.4.7 certified search engine) as a single-node
 # StatefulSet. Internal-only; persistence optional but enabled here so the
-# product index survives pod restarts (requirement 3.4).
+# product index survives pod restarts.
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "magento.opensearchHost" . }}
   labels: {{- include "magento.labels" . | nindent 4 }}
 spec:
-  clusterIP: None          # internal only, never public (3.6)
+  clusterIP: None          # internal only, never public
   selector:
     app.kubernetes.io/name: {{ include "magento.name" . }}
     component: opensearch

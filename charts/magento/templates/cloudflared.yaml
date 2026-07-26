@@ -1,5 +1,5 @@
 {{- if .Values.cloudflared.enabled }}
-# Cloudflare Tunnel = the public exposure mechanism (requirement 3.3). It makes
+# Cloudflare Tunnel: one of the supported public exposure mechanisms. It makes
 # an OUTBOUND-only connection to Cloudflare's edge, so NO inbound port, router
 # port-forward, or public IP is required, and the data tier is never exposed.
 #

@@ -1,5 +1,5 @@
 {{- if .Values.networkPolicy.enabled }}
-# Default-deny + explicit allows (bonus 8 / requirement 3.6). This is the
+# Default-deny + explicit allows. This is the
 # production intent: the data tier only accepts traffic from Magento pods, and
 # only the web tier is reachable from the ingress controller.
 # NOTE: requires a policy-enforcing CNI (Calico/Cilium). k3s/OrbStack's default

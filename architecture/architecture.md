@@ -22,7 +22,7 @@ Key points:
   from `cloudflared` to Cloudflare, so there is no inbound port, no public IP, and
   no router/firewall port-forward. The data tier can never be reached from the
   internet.
-- The **Ingress stays in the path** (assessment requirement 3.1): cloudflared
+- The **Ingress stays in the path**: cloudflared
   forwards to the ingress-nginx controller Service, which routes by host to
   `magento-web`.
 - **nginx and PHP-FPM are separated** into two containers in one Pod. nginx serves
@@ -57,7 +57,7 @@ Key points:
 - **DB lock provider** (`'lock' => ['provider' => 'db']`) instead of file locks, so
   locking is correct across multiple pods.
 
-## Config vs secret separation (requirement 3.6)
+## Config vs secret separation
 
 | ConfigMap `magento-config` (non-secret) | Secret `magento-secret` |
 |---|---|

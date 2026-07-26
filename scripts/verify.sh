@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies the core functions of the deployment (requirement 3.2 / demo step 3-9).
+# Verifies the core functions of the deployment.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
 [ -f .env ] && { set -a; . ./.env; set +a; }

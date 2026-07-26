@@ -1,5 +1,5 @@
 # Shared media (pub/media): product images + admin uploads. Persists across
-# pod recreation (requirement 3.4). RWO is fine on a single node; a multi-node
+# pod recreation. RWO is fine on a single node; a multi-node
 # production cluster needs RWX (EFS / Filestore / NFS) - see production-design.md.
 apiVersion: v1
 kind: PersistentVolumeClaim
